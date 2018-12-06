@@ -1,0 +1,206 @@
+#+BEGIN_SRC clojure
+(ns country-card-map.analysis
+  (:require country-card-map.core
+            semantic-csv.core
+            [rojure.core :refer [r-set! r-eval r-get get-r start-rserve]]
+            country-card-map.core
+)
+)
+
+
+
+#+END_SRC
+
+#+RESULTS:
+: nilWARNING: seqable? already refers to: #'clojure.core/seqable? in namespace: rojure.convert, being replaced by: #'clojure.core.incubator/seqable?
+
+#+BEGIN_SRC clojure
+
+(start-rserve)
+
+#+END_SRC
+
+#+RESULTS:
+: '(:out #object(java.io.BufferedReader 0x2886a462 "java.io.BufferedReader@2886a462")  :err #object(java.io.BufferedReader 0x6a121152 "java.io.BufferedReader@6a121152")  :in #object(java.io.BufferedWriter 0x3d3f4223 "java.io.BufferedWriter@3d3f4223")  :process #object(java.lang.UNIXProcess 0x795144a0 "java.lang.UNIXProcess@795144a0"))
+
+
+#+BEGIN_SRC clojure
+
+(def all-docs  (->>
+                  "input"
+                  clojure.java.io/file
+                  file-seq (filter #(clojure.string/includes? (.getFileName (.toPath %))  ".doc"))
+                  (map #(.getAbsolutePath %))
+                  (filter #(not (= "/home/carsten/Dropbox/sources/countryCardMap/input/Bulgaria Card FINAL.docx" %)))
+                  )
+    
+  )
+
+(defn distinct-by
+  "Like clojure.core/distinct, but can take a function f by which distinctiveness is calculated,
+   giving similar semantics to sort-by"
+  ([coll] (distinct-by identity coll))
+  ([distinction-fn coll]
+   (let [step (fn step [xs seen]
+                (lazy-seq
+                 ((fn [[f :as xs] seen]
+                    (when-let [s (seq xs)]
+                      (if (contains? seen (distinction-fn f))
+                        (recur (rest s) seen)
+                        (cons f (step (rest s) (conj seen (distinction-fn f)))))))
+                 xs seen)))]
+     (step coll #{}))))
+
+
+(def all-country-names
+  (->> all-docs
+      (map #(re-find #"input/(.* )Card" %))
+      (map second)
+      (map clojure.string/trim)
+      (filter #(not (= "Bulgaria" %)))
+      )
+)
+
+
+
+(def countries (doall (map country-card-map.core/read-country-file-data all-docs all-country-names)))
+
+(def diseases (flatten (map :diseases countries)))
+(def establishments (flatten (map :establishments countries)))
+(def animal-population (flatten (map :animal-population countries)))
+
+
+(def disease-names (distinct (map :disease  diseases)))
+
+(def entry (first diseases))
+
+(defn make-edges [entry extras]
+  (->> (select-keys entry
+                    (concat [:country
+                             :ministry
+                             :national-central-authority-collecting-data-level-1
+                             :national-central-authority-collecting-data-level-2
+                             :national-central-authority-collecting-data-level-3
+                             :national-central-authority-collecting-data-level-4
+                             :national-central-authority-collecting-data-level-5
+                             ] extras))
+       vals
+       (filter #(not (= "" %)))
+       (partition 2 1))
+  )
+
+
+
+(def edges-diseases (map #(hash-map :from (first %)
+                           :to (second %)
+                           :color "blue"
+                           )
+                         (distinct (reduce concat (map #(make-edges % [
+                                                                       ;:disease
+                                                                       ]) diseases)))))
+
+(def edges-establishments (map #(hash-map :from (first %)
+                           :to (second %)
+                           :color "red"
+                           )
+                               (distinct (reduce concat (map #(make-edges % [
+                                                                             ;:animal-category
+                                                                             ]) establishments)))))
+
+
+(def edges-animal-population (map #(hash-map :from (first %)
+                           :to (second %)
+                           :color "green"
+                           )
+                                  (distinct (reduce concat (map #(make-edges % [
+                                                                                ;:animal-categories
+                                                                                ]) animal-population )))))
+
+
+
+(def edges (->> (concat edges-establishments
+                        edges-diseases
+                        edges-animal-population
+                        )
+                (filter #(not (= "-" (:to %)  )))))
+
+(def countries (distinct (map #(:country %) diseases)))
+;; (def edges-diseases (->> diseases
+;;                 (map #(select-keys % [:country :disease]))
+;;                 (distinct-by (juxt :country :disease))
+;;                 (map #(hash-map :from (:country %)
+;;                                 :to (:disease % )
+;;                                 :type "disease"))
+;;                 (map #(dissoc % [:country :disease]))
+;;                 ))
+
+;; (def edges-establishments (->> establishments
+;;                 (map #(select-keys % [:country :animal-category]))
+;;                 (distinct-by (juxt :country :animal-category))
+;;                 (map #(hash-map :from (:country %)
+;;                                 :to (:animal-category % )
+;;                                 :type "establishment"))
+;;                 (map #(dissoc % [:country :animal-category]))
+
+;;                 ))
+
+;; (def edges (concat edges-diseases edges-establishments))
+
+
+
+
+(def nodes (map
+            #(hash-map :id %
+                       :title %
+                       :shape "circle"
+                       :level (if (some #{%} countries) 0 1)
+                       :label (if (some #{%} countries) % "")
+                       
+
+                       )
+            (distinct (concat
+                       (map :from edges)
+                       (map :to edges))
+
+                      ))
+  )
+
+
+(def graph (country-card-map.core/get-total-graph))
+
+(def edges (:edges graph))
+(def nodes (:nodes graph))
+
+
+(def r (rojure.core/get-r))
+
+;(rojure.core/r-set! r "edges" (clojure.core.matrix.dataset/dataset (clojure.walk/stringify-keys edges)))
+;(rojure.core/r-set! r "nodes" (clojure.core.matrix.dataset/dataset (clojure.walk/stringify-keys nodes)))
+(semantic-csv.core/spit-csv "edges.csv" edges)
+(semantic-csv.core/spit-csv "nodes.csv" nodes )
+
+
+
+
+
+#+END_SRC
+
+#+RESULTS:
+: #'country-card-map.analysis/all-docs#'country-card-map.analysis/distinct-by#'country-card-map.analysis/all-country-names#'country-card-map.analysis/countries#'country-card-map.analysis/diseases#'country-card-map.analysis/establishments#'country-card-map.analysis/animal-population#'country-card-map.analysis/disease-names#'country-card-map.analysis/entry#'country-card-map.analysis/make-edges#'country-card-map.analysis/edges-diseases#'country-card-map.analysis/edges-establishments#'country-card-map.analysis/edges-animal-population#'country-card-map.analysis/edges#'country-card-map.analysis/countries#'country-card-map.analysis/nodes#'country-card-map.analysis/graph#'country-card-map.analysis/edges#'country-card-map.analysis/nodes#'country-card-map.analysis/r#object[java.io.BufferedWriter 0x7474a93f "java.io.BufferedWriter@7474a93f"]#object[java.io.BufferedWriter 0x15bff19 "java.io.BufferedWriter@15bff19"]
+
+
+#+BEGIN_SRC R
+library("visNetwork")
+library("tidyverse")
+
+links <- read_csv("edges.csv")
+nodes <- read_csv("nodes.csv")
+visNetwork(nodes, links,width = 1600,height = 900) %>%
+    visEdges(arrows = "from") %>%
+    visPhysics(enabled = T,hierarchicalRepulsion=list(sprintConstant=0.5,springLength=50)) %>%
+    visHierarchicalLayout(treeSpacing = 200,blockShifting = F,sortMethod = "directed") %>%
+    visSave(file = "network.html")    
+#+END_SRC
+
+#+RESULTS:
+
