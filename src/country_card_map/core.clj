@@ -241,7 +241,8 @@
        flatten
        distinct
        (map #(hash-map :id %
-                       :title %))  
+                       :title %
+                       :label %))  
    ))
 
 (defn get-total-graph []
